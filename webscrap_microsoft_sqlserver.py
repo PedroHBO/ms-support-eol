@@ -8,10 +8,8 @@ from typing import List, Dict
 import os
 from dotenv import load_dotenv
 
-# # Carrega variáveis de ambiente
 load_dotenv()
 
-# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -21,7 +19,6 @@ logging.basicConfig(
     ]
 )
 
-# ===== CONFIGURAÇÕES DO BANCO DE DADOS =====
 DB_CONFIG = {
     'server': os.getenv('DB_SERVER'),
     'database': os.getenv('DB_NAME'),
@@ -40,121 +37,95 @@ def criar_tabelas():
         f"PWD={DB_CONFIG['password']}"
     )
     
-    print(f"\nString de conexão: {conn_str}")
-    
     try:
-        print("Tentando conectar ao banco de dados...")
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
-        print("✓ Conexão bem sucedida!")
-        
+        # Se tiver acesso de CRIAR TABELAS pode descomentar.
+        #
         # Tabela de execuções
-        '''print("\nVerificando tabela 'execucoes_scraper'...")
-        cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='execucoes_scraper' AND xtype='U')
-            CREATE TABLE execucoes_scraper (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                data_execucao DATETIME NOT NULL,
-                status VARCHAR(50) NOT NULL,
-                total_produtos INT,
-                total_erros INT,
-                mensagem VARCHAR(MAX)
-            )
-        """)
-        print("✓ Tabela 'execucoes_scraper' verificada/criada")
+        # cursor.execute("""
+        #     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='execucoes_scraper' AND xtype='U')
+        #     CREATE TABLE execucoes_scraper (
+        #         id INT IDENTITY(1,1) PRIMARY KEY,
+        #         data_execucao DATETIME NOT NULL,
+        #         status VARCHAR(50) NOT NULL,
+        #         total_inseridos INT DEFAULT 0,
+        #         total_atualizados INT DEFAULT 0,
+        #         total_existentes INT DEFAULT 0,
+        #         total_erros INT DEFAULT 0,
+        #         mensagem VARCHAR(MAX)
+        #     )
+        # """)
         
-        # Tabela de produtos
-        print("Verificando tabela 'produtos_endsupport'...")
-        cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='produtos_endsupport' AND xtype='U')
-            CREATE TABLE produtos_endsupport (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                ano INT NOT NULL,
-                nome_produto VARCHAR(500) NOT NULL,
-                data_fim_suporte VARCHAR(100),
-                url VARCHAR(500),
-                data_coleta DATETIME NOT NULL,
-                CONSTRAINT UK_produto_ano UNIQUE(nome_produto, ano, data_coleta)
-            )
-        """)
-        print("✓ Tabela 'produtos_endsupport' verificada/criada")
+        # # Tabela de produtos
+        # cursor.execute("""
+        #     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='produtos_endsupport' AND xtype='U')
+        #     CREATE TABLE produtos_endsupport (
+        #         id INT IDENTITY(1,1) PRIMARY KEY,
+        #         ano SMALLINT NOT NULL,
+        #         nome_produto VARCHAR(500) NOT NULL,
+        #         data_fim_suporte VARCHAR(100),
+        #         execucao_id INT NULL,
+        #         data_coleta DATETIME NOT NULL,
+        #         FOREIGN KEY (execucao_id) REFERENCES execucoes_scraper(id)
+        #     )
+        # """)
         
         conn.commit()
-        print("\n✓ Tabelas criadas/verificadas com sucesso")
-        '''
+        logging.info("Tabelas verificadas/criadas com sucesso")
+        
     except Exception as e:
-        print(f"\n✗ ERRO ao conectar/criar tabelas: {e}")
-        print(f"Tipo do erro: {type(e).__name__}")
         logging.error(f"Erro ao criar tabelas: {e}")
         raise
     finally:
-
         if conn:
             conn.close()
-            print("Conexão fechada")
 
 def scrape_microsoft_endsupport(ano: int) -> Dict:
-    """
-    Faz o scraping da página de End of Support da Microsoft
-    tratando corretamente múltiplos produtos por linha.
-    """
+    """Faz o scraping da página de End of Support da Microsoft."""
     url = f"https://learn.microsoft.com/en-us/lifecycle/end-of-support/end-of-support-{ano}"
-
-    print(f"\n{'='*60}")
-    print(f"SCRAPING ANO: {ano}")
-    print(f"URL: {url}")
-    print(f"{'='*60}")
-
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     }
-
+    
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-
         soup = BeautifulSoup(response.content, "html.parser")
-
+        
         titulo_tag = soup.find("h1")
         titulo = titulo_tag.get_text(strip=True) if titulo_tag else "Não encontrado"
-
+        
         dados = {
             "ano": ano,
             "url": url,
             "titulo": titulo,
             "produtos": []
         }
-
-        # Percorre todas as tabelas da página
+        
         for tabela in soup.find_all("table"):
             for linha in tabela.select("tbody tr"):
                 colunas = linha.find_all("td")
-
-                # Precisa ter pelo menos produto + data
+                
                 if len(colunas) < 2:
                     continue
-
+                
                 data_fim = colunas[1].get_text(strip=True)
-
-                # Cada <a> representa um produto
-                produtos = colunas[0].find_all(
-                    "a",
-                    attrs={"data-linktype": "absolute-path"}
-                )
-
+                produtos = colunas[0].find_all("a", attrs={"data-linktype": "absolute-path"})
+                
                 for a in produtos:
                     nome_produto = a.get_text(strip=True)
                     href = a.get("href")
-
                     dados["produtos"].append({
                         "nome": nome_produto,
                         "data_fim_suporte": data_fim,
                         "url_produto": f"https://learn.microsoft.com{href}" if href else None
                     })
-
-        print(f"✓ Produtos encontrados em {ano}: {len(dados['produtos'])}")
+        
+        logging.info(f"Ano {ano}: {len(dados['produtos'])} produtos encontrados")
         return dados
-
+        
     except requests.exceptions.RequestException as e:
         logging.error(f"Erro ao acessar {url}: {e}")
         return {
@@ -162,8 +133,7 @@ def scrape_microsoft_endsupport(ano: int) -> Dict:
             "url": url,
             "erro": str(e),
             "produtos": []
-}
-
+        }
 
 def salvar_no_banco(resultados: List[Dict]) -> tuple:
     """Salva os resultados no SQL Server."""
@@ -175,184 +145,141 @@ def salvar_no_banco(resultados: List[Dict]) -> tuple:
         f"PWD={DB_CONFIG['password']}"
     )
     
-    total_produtos = 0
+    total_inseridos = 0
+    total_atualizados = 0
+    total_existentes = 0
     total_erros = 0
     data_execucao = datetime.now()
-    
-    print(f"\n{'='*80}")
-    print("INICIANDO PROCESSO DE SALVAR NO BANCO")
-    print(f"Data/Hora: {data_execucao}")
-    print(f"Total de anos processados: {len(resultados)}")
-    print(f"{'='*80}")
-    
-    # Primeiro, apenas mostra o que seria inserido
-    print("\nPRÉVIA DOS DADOS PARA INSERÇÃO:")
-    
-    for idx, resultado in enumerate(resultados, 1):
-        ano = resultado['ano']
-        url = resultado['url']
-        
-        print(f"\n[{idx}] ANO {ano}:")
-        print(f"   URL: {url}")
-        
-        if 'erro' in resultado:
-            print(f"   ✗ ERRO: {resultado['erro']}")
-            total_erros += 1
-            continue
-        
-        print(f"   ✓ Título: {resultado['titulo']}")
-        print(f"   ✓ Produtos encontrados: {len(resultado['produtos'])}")
-        
-        # Mostra os primeiros 3 produtos como exemplo
-        for i, produto in enumerate(resultado['produtos'][:3], 1):
-            print(f"      Exemplo {i}: {produto['nome'][:60]}... | {produto['data_fim_suporte']}")
-        
-        if len(resultado['produtos']) > 3:
-            print(f"      ... e mais {len(resultado['produtos']) - 3} produtos")
-    
-    print(f"\n{'='*80}")
-    print("RESUMO PARA INSERÇÃO:")
-    print(f"Total de anos processados: {len(resultados)}")
-    print(f"Total de produtos para inserir: {sum(len(r['produtos']) for r in resultados if 'erro' not in r)}")
-    print(f"Total de erros: {sum(1 for r in resultados if 'erro' in r)}")
-    
-    # Pergunta se deve realmente inserir
-    resposta = input("\nDeseja realmente inserir no banco? (s/n): ").lower().strip()
-    
-    if resposta != 's':
-        print("Inserção cancelada pelo usuário.")
-        return 0, 0
-    
-    print("\nIniciando inserção no banco...")
+    execucao_id = None
     
     try:
-        print("Conectando ao banco...")
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
-        print("✓ Conexão estabelecida")
+        
+        # Registra a execução primeiro para obter o ID
+        cursor.execute("""
+            INSERT INTO execucoes_scraper (data_execucao, status, mensagem)
+            VALUES (?, 'EM_ANDAMENTO', 'Processando...')
+        """, (data_execucao,))
+        
+        cursor.execute("SELECT @@IDENTITY")
+        execucao_id = cursor.fetchone()[0]
+        conn.commit()
         
         for resultado in resultados:
             ano = resultado['ano']
-            url = resultado['url']
             
             if 'erro' in resultado:
                 total_erros += 1
-                print(f"\n✗ Pulando ano {ano} devido a erro: {resultado['erro']}")
                 continue
-            
-            print(f"\nProcessando ano {ano} ({len(resultado['produtos'])} produtos):")
             
             for produto in resultado['produtos']:
                 try:
-                    # Mostra o que está sendo inserido
-                    print(f"  → Produto: {produto['nome'][:50]}...")
-                    print(f"    Data Fim: {produto['data_fim_suporte']}")
-                    
+                    # Verifica se o produto já existe
                     cursor.execute("""
-                        INSERT INTO produtos_endsupport (ano, nome_produto, data_fim_suporte, url, data_coleta)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        ano,
-                        produto['nome'],
-                        produto['data_fim_suporte'],
-                        url,
-                        data_execucao
-                    ))
-
-                    total_produtos += 1
+                        SELECT id, data_fim_suporte 
+                        FROM produtos_endsupport 
+                        WHERE nome_produto = ? AND ano = ?
+                    """, (produto['nome'], ano))
                     
-                except pyodbc.IntegrityError:
-                    print(f"    ⚠ Produto já existe, ignorando...")
+                    registro_existente = cursor.fetchone()
+                    
+                    if registro_existente:
+                        # Verifica se houve mudança na data
+                        if registro_existente[1] != produto['data_fim_suporte']:
+                            cursor.execute("""
+                                UPDATE produtos_endsupport
+                                SET data_fim_suporte = ?,
+                                    execucao_id = ?,
+                                    data_coleta = GETDATE()
+                                WHERE id = ?
+                            """, (produto['data_fim_suporte'], execucao_id, registro_existente[0]))
+                            total_atualizados += 1
+                        else:
+                            total_existentes += 1
+                    else:
+                        # Insere novo registro
+                        cursor.execute("""
+                            INSERT INTO produtos_endsupport 
+                            (nome_produto, ano, data_fim_suporte, execucao_id, data_coleta)
+                            VALUES (?, ?, ?, ?, GETDATE())
+                        """, (produto['nome'], ano, produto['data_fim_suporte'], execucao_id))
+                        total_inseridos += 1
+                        
                 except Exception as e:
-                    print(f"    ✗ Erro ao inserir: {e}")
+                    logging.error(f"Erro ao processar produto '{produto['nome']}': {e}")
+                    total_erros += 1
         
-        # Registra a execução
-        print(f"\nRegistrando execução na tabela 'execucoes_scraper'...")
+        # Atualiza o registro de execução com os totais
+        status = 'SUCESSO' if total_erros == 0 else 'SUCESSO_COM_ERROS'
         cursor.execute("""
-            INSERT INTO execucoes_scraper (data_execucao, status, total_produtos, total_erros, mensagem)
-            VALUES (?, ?, ?, ?, ?)
+            UPDATE execucoes_scraper
+            SET status = ?,
+                total_inseridos = ?,
+                total_atualizados = ?,
+                total_existentes = ?,
+                total_erros = ?,
+                mensagem = ?
+            WHERE id = ?
         """, (
-            data_execucao,
-            'SUCESSO' if total_erros == 0 else 'SUCESSO_COM_ERROS',
-            total_produtos,
+            status,
+            total_inseridos,
+            total_atualizados,
+            total_existentes,
             total_erros,
-            f'Processados {len(resultados)} anos'
+            f'Processados {len(resultados)} anos',
+            execucao_id
         ))
         
         conn.commit()
         
-        print(f"\n✓ Simulação concluída!")
-        print(f"✓ Produtos que seriam inseridos: {total_produtos}")
-        print(f"✓ Erros: {total_erros}")
-        
-        return total_produtos, total_erros
+        return total_inseridos, total_atualizados, total_existentes, total_erros
         
     except Exception as e:
-        print(f"\n✗ ERRO ao conectar/salvar no banco: {e}")
-        print(f"Tipo do erro: {type(e).__name__}")
         logging.error(f"Erro ao salvar no banco: {e}")
-        
         raise
     finally:
         if conn:
             conn.close()
-            print("Conexão com o banco fechada")
 
 def executar_scraping():
     """Função principal que executa todo o processo."""
-    print("=" * 80)
-    print("MICROSOFT END OF SUPPORT - SCRAPER TOOL")
-    print("=" * 80)
-    
-    logging.info("=" * 60)
-    logging.info("Iniciando scraping...")
+    logging.info("="*60)
+    logging.info("Iniciando Microsoft End of Support Scraper")
+    logging.info("="*60)
     
     try:
-        print("\nETAPA 1: Verificando/Criando tabelas no banco")
-        print("-" * 60)
         criar_tabelas()
         
-        print("\n\nETAPA 2: Coletando dados do site da Microsoft")
-        print("-" * 60)
-        
-        # Define período (próximos 5 anos)
+        # Scraping dos próximos 5 anos
         ano_atual = datetime.now().year
         anos = list(range(ano_atual, ano_atual + 5))
         
-        print(f"Anos que serão processados: {anos}")
+        logging.info(f"Coletando dados dos anos: {anos}")
         
         resultados = []
-        
         for ano in anos:
-            print(f"\nProcessando ano {ano}...")
             dados = scrape_microsoft_endsupport(ano)
             resultados.append(dados)
             
-            if 'erro' not in dados:
-                print(f"✓ Concluído: {len(dados['produtos'])} produtos encontrados")
-            else:
-                print(f"✗ Falhou: {dados['erro']}")
-            
-            # Pausa entre requisições (para não sobrecarregar o servidor)
             if ano != anos[-1]:
-                print("Aguardando 2 segundos...")
                 time.sleep(2)
         
-        print("\n\nETAPA 3: Salvando dados no banco")
-        print("-" * 60)
-        total_produtos, total_erros = salvar_no_banco(resultados)
+        # Salva no banco
+        total_inseridos, total_atualizados, total_existentes, total_erros = salvar_no_banco(resultados)
         
-        print("\n" + "=" * 80)
-        print("RESUMO FINAL DA EXECUÇÃO")
-        print("=" * 80)
-        print(f"Total de anos processados: {len(resultados)}")
-        print(f"Produtos coletados: {total_produtos}")
-        print(f"Erros encontrados: {total_erros}")
-
+        # Resumo final
+        logging.info("="*60)
+        logging.info("RESUMO DA EXECUÇÃO")
+        logging.info("="*60)
+        logging.info(f"Novos produtos inseridos: {total_inseridos}")
+        logging.info(f"Produtos atualizados: {total_atualizados}")
+        logging.info(f"Produtos já existentes (sem alteração): {total_existentes}")
+        logging.info(f"Erros encontrados: {total_erros}")
+        logging.info(f"Total processado: {total_inseridos + total_atualizados + total_existentes}")
+        logging.info("="*60)
         
     except Exception as e:
-        print(f"\n✗ ERRO FATAL: {e}")
-        print("=" * 80)
         logging.error(f"Erro fatal na execução: {e}")
         raise
 
