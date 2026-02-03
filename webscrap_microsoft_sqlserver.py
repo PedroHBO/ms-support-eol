@@ -40,8 +40,7 @@ def criar_tabelas():
     try:
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
-        # Se tiver acesso de CRIAR TABELAS pode descomentar.
-        #
+        
         # Tabela de execuções
         # cursor.execute("""
         #     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='execucoes_scraper' AND xtype='U')
